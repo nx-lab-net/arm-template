@@ -2,16 +2,52 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "vnetName": {
+    "VerifyAppFQDN": {
       "type": "string",
       "metadata": {
-        "description": "Name of the virtual network"
+        "description": "FQDN to access the application through the web browser"
       }
     },
-    "resourceGroupName": {
+    "AddressSpace": {
       "type": "string",
       "metadata": {
-        "description": "Name of the resource group"
+        "description": "IP CIDR for Verify application deployment, ex. 10.120.0.0/16"
+      }
+    },
+    "ServicePrincipalUser": {
+      "type": "string",
+      "metadata": {
+        "description": "Service Principal User"
+      }
+    },
+    "ServicePrincipalSecret": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Service Principal Secret"
+      }
+    },
+    "ServicePrincipalTenant": {
+      "type": "string",
+      "metadata": {
+        "description": "Service Principal Tenant"
+      }
+    },
+    "ModelsStorageURL": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Models will be transfered using this auth method"
+      }
+    },
+    "ArtifactoryUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "Username to access the Container Registry"
+      }
+    },
+    "ArtifactoryPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Password to access the Container Registry"
       }
     }
   },
@@ -19,7 +55,7 @@
     {
       "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2020-06-01",
-      "name": "[parameters('vnetName')]",
+      "name": "verify-deploy-VNET",
       "location": "[resourceGroup().location]",
       "properties": {
         "addressSpace": {
@@ -40,7 +76,7 @@
     {
       "type": "Microsoft.Network/publicIPAddresses",
       "apiVersion": "2020-06-01",
-      "name": "myPublicIP",
+      "name": "verify-deploy-PIP",
       "location": "[resourceGroup().location]",
       "properties": {
         "publicIPAllocationMethod": "Dynamic"
@@ -49,11 +85,11 @@
     {
       "type": "Microsoft.Network/networkInterfaces",
       "apiVersion": "2020-06-01",
-      "name": "myNIC",
+      "name": "verify-deploy-NIC",
       "location": "[resourceGroup().location]",
       "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]",
-        "[resourceId('Microsoft.Network/publicIPAddresses', 'myPublicIP')]"
+        "[resourceId('Microsoft.Network/virtualNetworks', 'verify-deploy-VNET')]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'verify-deploy-PIP')]"
       ],
       "properties": {
         "ipConfigurations": [
@@ -61,11 +97,11 @@
             "name": "ipconfig1",
             "properties": {
               "subnet": {
-                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'default')]"
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'verify-deploy-VNET', 'default')]"
               },
               "privateIPAllocationMethod": "Dynamic",
               "publicIPAddress": {
-                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'myPublicIP')]"
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'verify-deploy-PIP')]"
               }
             }
           }
@@ -75,23 +111,24 @@
     {
       "type": "Microsoft.Compute/virtualMachines",
       "apiVersion": "2020-06-01",
-      "name": "myVM",
+      "name": "verify-deploy-VM",
       "location": "[resourceGroup().location]",
       "dependsOn": [
-        "[resourceId('Microsoft.Network/networkInterfaces', 'myNIC')]"
+        "[resourceId('Microsoft.Network/networkInterfaces', 'verify-deploy-NIC')]"
       ],
       "properties": {
         "hardwareProfile": {
           "vmSize": "Standard_D4s_v3"
         },
         "osProfile": {
-          "computerName": "myVM",
+          "computerName": "verify-deploy-VM",
           "adminUsername": "verify",
           "adminPassword": "Verify416",
           "linuxConfiguration": {
             "disablePasswordAuthentication": false
           },
-          "customData": "[base64(concat('#!/bin/bash\n', 'sudo apt-get update\n', 'sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common\n', 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -\n', 'sudo add-apt-repository \"deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable\"\n', 'sudo apt-get update\n', 'sudo apt-get install -y docker-ce\n', 'docker login -u verify -p ttZvzPlzhWJ78B+vWMYsN3FmRdKGn11lsp8m0iPSgH+ACRCDgePj zerosystemseng.azurecr.io\n', 'docker run -it  --rm   -e TF_VAR_resource_group_name="my-resource-group" -e TF_VAR_virtual_network_name="my-vnet" zerosystemseng.azurecr.io/zerosystems/one-click:v6'))]"
+         "customData": "[base64(concat('#!/bin/bash\n', 'sudo apt-get update\n', 'sudo apt install docker.io -y\n', 'sudo docker login -u ', parameters('ArtifactoryUsername'), ' -p ', parameters('ArtifactoryPassword'), ' zerosystemseng.azurecr.io && sudo docker run -d -v /var/log/cloud-init-output.log:/cloud-init-output.log -p 80:80 zerosystemseng.azurecr.io/zerosystems/verify/logger:latest && sudo docker run  -e TF_VAR_acr_username=', parameters('ArtifactoryUsername'), ' -e TF_VAR_acr_password=', parameters('ArtifactoryPassword'), ' -e TF_VAR_existing_vm_rg=', resourceGroup().name, ' -e TF_VAR_existing_vm_vnet=verify-deploy-VNET', ' -e TF_VAR_vnet_address_space=', parameters('AddressSpace'), ' -e ServicePrincipalUser=', parameters('ServicePrincipalUser'), ' -e ServicePrincipalSecret=', parameters('ServicePrincipalSecret'), ' -e ServicePrincipalTenant=', parameters('ServicePrincipalTenant'), ' -e TF_VAR_ModelsStorageURL=', parameters('ModelsStorageURL'), ' zerosystemseng.azurecr.io/zerosystems/verify/deployer:latest'))]"
+
         },
         "storageProfile": {
           "imageReference": {
@@ -107,7 +144,7 @@
         "networkProfile": {
           "networkInterfaces": [
             {
-              "id": "[resourceId('Microsoft.Network/networkInterfaces', 'myNIC')]"
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', 'verify-deploy-NIC')]"
             }
           ]
         }
@@ -115,3 +152,5 @@
     }
   ]
 }
+
+
